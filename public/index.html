@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>내 Todo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="app-header">
+      <p class="eyebrow" id="today-label">2026년 7월 20일</p>
+      <h1 class="greeting">오늘의 할 일 🌤️</h1>
+      <p class="subtitle" id="remaining-summary">불러오는 중...</p>
+    </header>
+
+    <nav class="day-strip" id="day-strip" aria-label="날짜로 보기"></nav>
+
+    <div class="filter-row">
+      <select id="filter-tag">
+        <option value="">태그 전체</option>
+      </select>
+      <select id="filter-completed">
+        <option value="">전체</option>
+        <option value="0">미완료</option>
+        <option value="1">완료</option>
+      </select>
+      <input type="search" id="filter-search" placeholder="🔍 검색" />
+    </div>
+
+    <ol id="todo-list" class="timeline"></ol>
+    <p id="empty-state" class="empty-state" hidden>표시할 할 일이 없어요 🌱</p>
+  </div>
+
+  <button type="button" id="fab-add" class="fab" aria-label="할 일 추가">+</button>
+
+  <div class="modal-backdrop" id="modal-backdrop" hidden>
+    <form id="add-form" class="add-sheet">
+      <div class="add-sheet-handle"></div>
+      <h2>새 할 일 🐣</h2>
+
+      <input type="text" id="title" placeholder="할 일 제목" required maxlength="200" />
+
+      <div class="add-sheet-row">
+        <label class="labeled-field" for="due-date">
+          <span class="labeled-field-label">📅 마감일</span>
+          <input type="date" id="due-date" />
+        </label>
+        <label class="labeled-field" for="reminder-at">
+          <span class="labeled-field-label">🔔 알림</span>
+          <input type="datetime-local" id="reminder-at" />
+        </label>
+      </div>
+
+      <input type="text" id="description" placeholder="설명 (선택)" />
+      <input type="text" id="tags" placeholder="태그, 쉼표로 구분 (예: 업무, 급함)" />
+
+      <div class="add-sheet-actions">
+        <button type="button" id="cancel-add" class="btn-ghost">취소</button>
+        <button type="submit" class="btn-primary">추가하기</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
