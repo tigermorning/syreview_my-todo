@@ -5,3 +5,5 @@ todo.db-journal
 todo.db-wal
 todo.db-shm
 .claude/settings.local.json
+.omc/
+*.log
