@@ -3,6 +3,7 @@ const state = {
   tag: "",
   completed: "",
   q: "",
+  allTags: [], // flat list for tag selector
 };
 
 const firedTodoIds = new Set();
@@ -15,6 +16,9 @@ const todayLabelEl = document.getElementById("today-label");
 const summaryEl = document.getElementById("remaining-summary");
 const modalBackdrop = document.getElementById("modal-backdrop");
 const addForm = document.getElementById("add-form");
+const editModalBackdrop = document.getElementById("edit-modal-backdrop");
+const editForm = document.getElementById("edit-form");
+const categoryModalBackdrop = document.getElementById("category-modal-backdrop");
 
 function pad(n) {
   return String(n).padStart(2, "0");
@@ -113,13 +117,16 @@ dayStripEl.addEventListener("click", (e) => {
 // ---------- data loading ----------
 
 async function loadTags() {
-  const tags = await api("/api/tags");
+  const tags = await api("/api/tags/flat");
+  state.allTags = tags;
+  // Update filter dropdown
   const current = tagSelectEl.value;
   tagSelectEl.innerHTML = '<option value="">태그 전체</option>';
   for (const tag of tags) {
     const opt = document.createElement("option");
     opt.value = tag.name;
-    opt.textContent = tag.name;
+    const prefix = tag.parent_id ? "  └ " : "";
+    opt.textContent = prefix + tag.name;
     tagSelectEl.appendChild(opt);
   }
   tagSelectEl.value = current;
@@ -148,6 +155,58 @@ function updateSummary(todos) {
   const remaining = todos.filter((t) => !t.isCompleted).length;
   summaryEl.textContent =
     remaining === 0 ? "할 일을 모두 끝냈어요! 🎉" : `할 일이 ${remaining}개 남았어요 🌱`;
+}
+
+// ---------- tag selector (category) ----------
+
+function renderTagSelector(container, selectedTagIds = []) {
+  container.innerHTML = "";
+  const roots = state.allTags.filter((t) => !t.parent_id);
+  const children = state.allTags.filter((t) => t.parent_id);
+
+  for (const tag of roots) {
+    const tagChildren = children.filter((c) => c.parent_id === tag.id);
+
+    const item = document.createElement("div");
+    item.className = "tag-selector-item";
+    if (selectedTagIds.includes(tag.id)) item.classList.add("selected");
+    item.dataset.tagId = tag.id;
+    item.innerHTML = `<span class="tag-check">✓</span>${tag.name}`;
+    if (tag.color) item.style.background = tag.color;
+
+    item.addEventListener("click", () => {
+      item.classList.toggle("selected");
+    });
+    container.appendChild(item);
+
+    if (tagChildren.length > 0) {
+      const childRow = document.createElement("div");
+      childRow.className = "tag-selector-children";
+      for (const child of tagChildren) {
+        const cEl = document.createElement("div");
+        cEl.className = "tag-selector-child";
+        if (selectedTagIds.includes(child.id)) cEl.classList.add("selected");
+        cEl.dataset.tagId = child.id;
+        cEl.textContent = child.name;
+        if (child.color) cEl.style.background = child.color;
+        cEl.addEventListener("click", () => {
+          cEl.classList.toggle("selected");
+        });
+        childRow.appendChild(cEl);
+      }
+      container.appendChild(childRow);
+    }
+  }
+}
+
+function getSelectedTagNames(container) {
+  const names = [];
+  for (const el of container.querySelectorAll(".tag-selector-item.selected, .tag-selector-child.selected")) {
+    const tagId = Number(el.dataset.tagId);
+    const tag = state.allTags.find((t) => t.id === tagId);
+    if (tag) names.push(tag.name);
+  }
+  return names;
 }
 
 // ---------- rendering ----------
@@ -192,6 +251,13 @@ function renderTodos(todos) {
     deleteBtn.setAttribute("aria-label", "삭제");
     deleteBtn.textContent = "🗑";
     card.appendChild(deleteBtn);
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "edit-btn";
+    editBtn.setAttribute("aria-label", "수정");
+    editBtn.textContent = "✏️";
+    card.appendChild(editBtn);
 
     const titleRow = document.createElement("div");
     titleRow.className = "todo-title-row";
@@ -273,6 +339,13 @@ listEl.addEventListener("click", async (e) => {
   if (e.target.classList.contains("remove-reminder")) {
     await api(`/api/reminders/${e.target.dataset.reminderId}`, { method: "DELETE" });
     loadTodos();
+    return;
+  }
+  if (e.target.classList.contains("edit-btn")) {
+    const li = e.target.closest(".todo-item");
+    const id = li.dataset.id;
+    const todo = await api(`/api/todos/${id}`);
+    openEditModal(todo);
   }
 });
 
@@ -280,6 +353,7 @@ listEl.addEventListener("click", async (e) => {
 
 function openModal() {
   modalBackdrop.hidden = false;
+  renderTagSelector(document.getElementById("tag-selector"));
   document.getElementById("title").focus();
 }
 
@@ -293,9 +367,6 @@ document.getElementById("cancel-add").addEventListener("click", closeModal);
 modalBackdrop.addEventListener("click", (e) => {
   if (e.target === modalBackdrop) closeModal();
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !modalBackdrop.hidden) closeModal();
-});
 
 addForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -304,11 +375,7 @@ addForm.addEventListener("submit", async (e) => {
 
   const dueDate = document.getElementById("due-date").value || null;
   const description = document.getElementById("description").value.trim() || null;
-  const tagsInput = document.getElementById("tags").value;
-  const tags = tagsInput
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
+  const tags = getSelectedTagNames(document.getElementById("tag-selector"));
   const reminderRaw = document.getElementById("reminder-at").value;
   const reminderAt = reminderRaw ? reminderRaw.replace("T", " ") + ":00" : null;
 
@@ -320,6 +387,203 @@ addForm.addEventListener("submit", async (e) => {
   closeModal();
   await loadTags();
   await loadTodos();
+});
+
+// ---------- edit-todo modal ----------
+
+function openEditModal(todo) {
+  document.getElementById("edit-id").value = todo.id;
+  document.getElementById("edit-title").value = todo.title;
+  document.getElementById("edit-description").value = todo.description || "";
+
+  if (todo.dueDate) {
+    document.getElementById("edit-due-date").value = todo.dueDate;
+  } else {
+    document.getElementById("edit-due-date").value = "";
+  }
+
+  // Extract time from reminders or leave blank
+  document.getElementById("edit-due-time").value = "";
+
+  // Render tag selector with current tags selected
+  const tagIds = todo.tags.map((t) => t.id);
+  renderTagSelector(document.getElementById("edit-tag-selector"), tagIds);
+
+  editModalBackdrop.hidden = false;
+  document.getElementById("edit-title").focus();
+}
+
+function closeEditModal() {
+  editModalBackdrop.hidden = true;
+  editForm.reset();
+}
+
+document.getElementById("cancel-edit").addEventListener("click", closeEditModal);
+editModalBackdrop.addEventListener("click", (e) => {
+  if (e.target === editModalBackdrop) closeEditModal();
+});
+
+editForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = document.getElementById("edit-id").value;
+  const title = document.getElementById("edit-title").value.trim();
+  if (!title) return;
+
+  let dueDate = document.getElementById("edit-due-date").value || null;
+  const dueTime = document.getElementById("edit-due-time").value || null;
+
+  // Combine date and time if both are provided
+  if (dueDate && dueTime) {
+    dueDate = dueDate + " " + dueTime + ":00";
+  }
+
+  const description = document.getElementById("edit-description").value.trim() || null;
+  const tags = getSelectedTagNames(document.getElementById("edit-tag-selector"));
+
+  await api(`/api/todos/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title, description, dueDate, tags }),
+  });
+
+  closeEditModal();
+  await loadTodos();
+});
+
+// ---------- category management modal ----------
+
+function openCategoryModal() {
+  categoryModalBackdrop.hidden = false;
+  renderCategoryList();
+}
+
+function closeCategoryModal() {
+  categoryModalBackdrop.hidden = true;
+}
+
+document.getElementById("close-category-modal").addEventListener("click", closeCategoryModal);
+categoryModalBackdrop.addEventListener("click", (e) => {
+  if (e.target === categoryModalBackdrop) closeCategoryModal();
+});
+
+async function renderCategoryList() {
+  const categories = await api("/api/tags");
+  const listEl = document.getElementById("category-list");
+  listEl.innerHTML = "";
+
+  for (const cat of categories) {
+    const group = document.createElement("div");
+    group.className = "category-group";
+
+    const header = document.createElement("div");
+    header.className = "category-header";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "category-name";
+    nameSpan.textContent = cat.name;
+    if (cat.color) nameSpan.style.color = cat.color;
+    header.appendChild(nameSpan);
+
+    const actions = document.createElement("div");
+    actions.className = "category-actions";
+
+    const renameBtn = document.createElement("button");
+    renameBtn.textContent = "이름변경";
+    renameBtn.addEventListener("click", async () => {
+      const newName = prompt("새 이름을 입력하세요", cat.name);
+      if (newName && newName.trim()) {
+        await api(`/api/tags/${cat.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name: newName.trim() }),
+        });
+        renderCategoryList();
+        await loadTags();
+      }
+    });
+    actions.appendChild(renameBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "delete-cat-btn";
+    deleteBtn.textContent = "삭제";
+    deleteBtn.addEventListener("click", async () => {
+      if (confirm(`"${cat.name}" 카테고리를 삭제하시겠습니까? 하위 카테고리도 함께 삭제됩니다.`)) {
+        await api(`/api/tags/${cat.id}`, { method: "DELETE" });
+        renderCategoryList();
+        await loadTags();
+      }
+    });
+    actions.appendChild(deleteBtn);
+
+    header.appendChild(actions);
+    group.appendChild(header);
+
+    // Subcategories
+    if (cat.children && cat.children.length > 0) {
+      const subList = document.createElement("div");
+      subList.className = "subcategory-list";
+      for (const sub of cat.children) {
+        const chip = document.createElement("span");
+        chip.className = "subcategory-chip";
+        chip.textContent = sub.name;
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "×";
+        removeBtn.addEventListener("click", async () => {
+          if (confirm(`"${sub.name}" 하위 카테고리를 삭제하시겠습니까?`)) {
+            await api(`/api/tags/${sub.id}`, { method: "DELETE" });
+            renderCategoryList();
+            await loadTags();
+          }
+        });
+        chip.appendChild(removeBtn);
+        subList.appendChild(chip);
+      }
+      group.appendChild(subList);
+    }
+
+    // Add subcategory button
+    const addSubBtn = document.createElement("button");
+    addSubBtn.className = "add-subcategory-btn";
+    addSubBtn.textContent = "+ 하위 카테고리 추가";
+    addSubBtn.addEventListener("click", async () => {
+      const subName = prompt("하위 카테고리 이름을 입력하세요");
+      if (subName && subName.trim()) {
+        await api("/api/tags", {
+          method: "POST",
+          body: JSON.stringify({ name: subName.trim(), parentId: cat.id }),
+        });
+        renderCategoryList();
+        await loadTags();
+      }
+    });
+    group.appendChild(addSubBtn);
+
+    listEl.appendChild(group);
+  }
+}
+
+// Add new top-level category
+document.getElementById("add-category-btn").addEventListener("click", async () => {
+  const input = document.getElementById("new-category-name");
+  const name = input.value.trim();
+  if (!name) return;
+
+  try {
+    await api("/api/tags", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    input.value = "";
+    renderCategoryList();
+    await loadTags();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+document.getElementById("new-category-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    document.getElementById("add-category-btn").click();
+  }
 });
 
 // ---------- filters ----------
@@ -381,4 +645,17 @@ const REMINDER_POLL_MS = 30000;
   await loadTodos();
   setTimeout(checkDueReminders, 3000);
   setInterval(checkDueReminders, REMINDER_POLL_MS);
+
+  // Add category management button to filter row
+  const filterRow = document.querySelector(".filter-row");
+  const catBtn = document.createElement("button");
+  catBtn.type = "button";
+  catBtn.className = "btn-ghost";
+  catBtn.textContent = "🏷️ 카테고리 관리";
+  catBtn.style.padding = "8px 14px";
+  catBtn.style.fontSize = "13px";
+  catBtn.style.borderRadius = "20px";
+  catBtn.style.whiteSpace = "nowrap";
+  catBtn.addEventListener("click", openCategoryModal);
+  filterRow.appendChild(catBtn);
 })();

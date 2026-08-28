@@ -244,11 +244,97 @@ app.delete("/api/todos/:id", (req, res) => {
   res.status(204).end();
 });
 
-// ---------- tags ----------
+// ---------- tags (카테고리) ----------
 
 app.get("/api/tags", (req, res) => {
-  const tags = db.prepare("SELECT id, name, color FROM tags ORDER BY name").all();
+  const tags = db.prepare("SELECT id, name, color, parent_id FROM tags ORDER BY parent_id NULLS FIRST, name").all();
+  // Build hierarchical structure
+  const roots = [];
+  const byId = {};
+  for (const t of tags) {
+    byId[t.id] = { ...t, children: [] };
+  }
+  for (const t of tags) {
+    if (t.parent_id && byId[t.parent_id]) {
+      byId[t.parent_id].children.push(byId[t.id]);
+    } else {
+      roots.push(byId[t.id]);
+    }
+  }
+  res.json(roots);
+});
+
+app.get("/api/tags/flat", (req, res) => {
+  const tags = db.prepare("SELECT id, name, color, parent_id FROM tags ORDER BY parent_id NULLS FIRST, name").all();
   res.json(tags);
+});
+
+app.post("/api/tags", (req, res) => {
+  const { name, color, parentId } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: "name은 필수입니다." });
+  }
+  const clean = name.trim();
+  const existing = db.prepare("SELECT id FROM tags WHERE name = ? AND parent_id IS ?").get(clean, parentId || null);
+  if (existing) {
+    return res.status(409).json({ error: "이미 같은 이름의 태그가 있습니다." });
+  }
+  const result = db.prepare("INSERT INTO tags (name, color, parent_id) VALUES (?, ?, ?)").run(
+    clean, color || null, parentId || null
+  );
+  const tagId = result.lastInsertRowid;
+  if (!color) {
+    const c = TAG_PALETTE[tagId % TAG_PALETTE.length];
+    db.prepare("UPDATE tags SET color = ? WHERE id = ?").run(c, tagId);
+  }
+  const tag = db.prepare("SELECT id, name, color, parent_id FROM tags WHERE id = ?").get(tagId);
+  res.status(201).json(tag);
+});
+
+app.patch("/api/tags/:id", (req, res) => {
+  const { id } = req.params;
+  const existing = db.prepare("SELECT id FROM tags WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "태그를 찾을 수 없습니다." });
+
+  const { name, color, parentId } = req.body;
+  const fields = [];
+  const params = [];
+
+  if (name !== undefined) {
+    fields.push("name = ?");
+    params.push(name.trim());
+  }
+  if (color !== undefined) {
+    fields.push("color = ?");
+    params.push(color);
+  }
+  if (parentId !== undefined) {
+    fields.push("parent_id = ?");
+    params.push(parentId || null);
+  }
+  if (fields.length === 0) {
+    return res.status(400).json({ error: "수정할 필드가 없습니다." });
+  }
+
+  try {
+    db.prepare(`UPDATE tags SET ${fields.join(", ")} WHERE id = ?`).run(...params, id);
+  } catch (e) {
+    if (e.message.includes("UNIQUE")) {
+      return res.status(409).json({ error: "이미 같은 이름의 태그가 있습니다." });
+    }
+    throw e;
+  }
+
+  const tag = db.prepare("SELECT id, name, color, parent_id FROM tags WHERE id = ?").get(id);
+  res.json(tag);
+});
+
+app.delete("/api/tags/:id", (req, res) => {
+  const result = db.prepare("DELETE FROM tags WHERE id = ?").run(req.params.id);
+  if (result.changes === 0) {
+    return res.status(404).json({ error: "태그를 찾을 수 없습니다." });
+  }
+  res.status(204).end();
 });
 
 // ---------- reminders ----------

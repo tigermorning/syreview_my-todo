@@ -10,11 +10,13 @@ CREATE TABLE IF NOT EXISTS todos (
   updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. 태그 사전
+-- 2. 태그(카테고리) 사전 — 상위/하위 구조 지원
 CREATE TABLE IF NOT EXISTS tags (
-  id     INTEGER PRIMARY KEY AUTOINCREMENT,
-  name   TEXT NOT NULL UNIQUE,
-  color  TEXT
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  name      TEXT NOT NULL,
+  color     TEXT,
+  parent_id INTEGER REFERENCES tags(id) ON DELETE SET NULL,
+  UNIQUE(name, parent_id)
 );
 
 -- 3. todos <-> tags 다대다 연결
